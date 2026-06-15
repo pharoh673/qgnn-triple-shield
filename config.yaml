@@ -1,0 +1,168 @@
+# =============================================================================
+# qgnn-triple-shield — central experiment config.
+# Every script reads this. Nothing about an experiment lives in code.
+# =============================================================================
+
+seed: 42
+
+# ---------- Data ----------
+data:
+  # JetNet5 classes. 'g' = gluon, 't' = top. Most-separable pair for clean signal.
+  classes: [g, t]
+  # Particles per jet. JetNet's stock dataset is padded to 30; we truncate to top-n_const by ptrel.
+  n_const: 16
+  # Per-particle features after preprocessing: (Δη, Δφ, log ptrel, log Erel).
+  n_features: 4
+  # Held-out test pool size (per class is n_test/2). Same test set for every sweep cell.
+  n_test: 2000
+  # Maximum training-pool size to keep in memory (we subsample from this).
+  n_pool: 8000
+
+# ---------- Paths (resolved at runtime via data/paths.py) ----------
+paths:
+  # Relative to a platform-dependent root. See data/paths.py.
+  results_dir: results
+  cache_dir: results/cache
+  figures_dir: results/figures
+  data_dir: data_cache
+
+# ---------- Models ----------
+model:
+  equivariant:
+    reuploading_depth: 3       # L
+    entangler: ring            # ring|chain
+    trainable_per_qubit: 3     # RY-RZ-RY
+    readout: Z
+    head_bottleneck: true      # adds Linear(n_qubits→n_qubits) to match non-equiv head params
+
+  # Fork A1: identical circuit + identical head as equivariant; symmetry broken by
+  # a parameter-free sinusoidal positional encoding added to features → EXACT budget match.
+  non_equivariant:
+    reuploading_depth: 3
+    entangler: ring
+    trainable_per_qubit: 3
+    readout: Z
+    head_bottleneck: true
+    positional_encoding: sinusoidal
+    pos_scale: 1.0             # O(1) so the order signal is learnable
+
+  # Two classical PFN baselines (decision: run both).
+  # _matched is parameter-matched to the 61-param quantum models (phi=(10,),rho=() -> 6*10+1=61);
+  # _reference is a competent small PFN as the honest performance ceiling.
+  classical_matched:
+    phi_hidden: [10]
+    rho_hidden: []
+    pool: mean
+  classical_reference:
+    phi_hidden: [16, 16]
+    rho_hidden: [16]
+    pool: mean
+
+# ---------- Training ----------
+train:
+  optimizer: adam
+  lr: 0.01
+  weight_decay: 0.0
+  batch_size: 32
+  max_epochs: 80
+  early_stop_patience: 12
+  val_frac: 0.2                # fraction of training subsample held out for early stopping
+  loss: bce_with_logits
+  # Random restarts to escape vanishing-gradient ("stuck at chance") initializations.
+  # If TRAIN AUC is still ~chance after warmup_epochs, the init is dead -> reinit with a
+  # new seed. (AUC, not BCE loss: a slow-but-learning model can have AUC>0.5 yet loss≈ln2.)
+  max_restarts: 4
+  warmup_epochs: 15
+  stuck_auc: 0.55            # train AUC below this after warmup = no signal = restart
+
+# ---------- Noise ----------
+# Each regime has its OWN level set: they have very different AUC sensitivity
+# (empirically probed). iid incoherent noise is relatively benign (depolarizing even
+# acts like regularization), so iid uses amplitude_damping with a larger p range;
+# correlated coherent RX noise degrades cleanly so it uses a smaller range.
+noise:
+  n_trajectories: 8            # trajectories to average for correlated (coherent) noise
+  iid:
+    channels: [amplitude_damping]   # non-unital -> genuinely destroys ⟨Z⟩ info
+    levels:
+      low:  0.10
+      mid:  0.20
+      high: 0.35
+  correlated:
+    type: ou_rotation          # OU-correlated coherent rotation (non-Markovian, trajectory-avg)
+    axis: x                    # X (not Z): RZ would commute with the Z readout (no-op)
+    tau: 2.0                   # correlation time (units = number of layers); secondary sweep axis
+    sigma: 1.0                 # amplitude scale; phase std = sigma * sqrt(p) * pi
+    levels:
+      low:  0.05
+      mid:  0.10
+      high: 0.20
+
+# ---------- Diagnostics ----------
+diagnostics:
+  grad_variance:
+    n_inits: 30
+    target_param_index: 0      # which θ to probe
+    n_qubits_grid: [2, 4, 6, 8]
+
+# ---------- Sweep grids ----------
+# One-Axis-At-a-Time (OAT) design: each block varies ONE stress axis with the others
+# fixed at the anchor (nq=4, N=200, noise=none), directly producing the target figures.
+# This avoids the infeasible full cross-product (nq=8 iid on default.mixed ≈ 7 h/config).
+# iid noise is kept to nq<=4 (default.mixed cost ~4^n); the high-qubit noise story uses
+# correlated noise (statevector trajectories, feasible to nq=8). Blocks are unioned and
+# de-duplicated by config hash, so shared cells (e.g. the anchor) run once.
+sweep:
+  smoke:
+    n_replicates: 2
+    models: [equivariant, non_equivariant, classical_matched, classical_reference]
+    blocks:
+      - name: learning_curve
+        N: [20, 100]
+        n_qubits: [4]
+        noise: [{regime: none, level: none}]
+      - name: qubit
+        N: [100]
+        n_qubits: [2, 4]
+        noise: [{regime: none, level: none}]
+      - name: noise
+        N: [100]
+        n_qubits: [4]
+        noise: [{regime: none, level: none}, {regime: iid, level: mid}, {regime: correlated, level: mid}]
+
+  full:
+    n_replicates: 10
+    models: [equivariant, non_equivariant, classical_matched, classical_reference]
+    blocks:
+      # Fig 1 (+ gen-gap): learning curves vs N at the anchor qubit/noise.
+      # More replicates here (cheap, fast configs) to tighten the small-N error bands.
+      - name: learning_curve
+        n_replicates: 20
+        N: [20, 50, 100, 200, 500, 1000]
+        n_qubits: [4]
+        noise: [{regime: none, level: none}]
+      # Fig 2: qubit frugality vs n_qubits at anchor N/noise.
+      - name: qubit
+        N: [200]
+        n_qubits: [2, 4, 6, 8]
+        noise: [{regime: none, level: none}]
+      # Fig 3: noise robustness vs p (iid + correlated) at anchor N/qubits.
+      - name: noise
+        N: [200]
+        n_qubits: [4]
+        noise:
+          - {regime: none,       level: none}
+          - {regime: iid,        level: low}
+          - {regime: iid,        level: mid}
+          - {regime: iid,        level: high}
+          - {regime: correlated, level: low}
+          - {regime: correlated, level: mid}
+          - {regime: correlated, level: high}
+      # Bonus headline: 2-D shield surface, n_qubits x correlated-noise at anchor N.
+      - name: shield_surface
+        N: [200]
+        n_qubits: [2, 4, 6, 8]
+        noise:
+          - {regime: correlated, level: low}
+          - {regime: correlated, level: mid}
+          - {regime: correlated, level: high}

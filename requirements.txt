@@ -1,0 +1,22 @@
+# Core scientific stack — versions chosen to match Kaggle's default 2026 image where possible.
+# numpy pinned <2: jetnet -> energyflow -> wasserstein ship wheels compiled against
+# NumPy 1.x and segfault/ImportError under NumPy 2.x (Colab's default). Keep <2 project-wide.
+numpy>=1.24,<2
+scipy>=1.10
+pandas>=2.0
+pyarrow>=14.0          # parquet result tables
+scikit-learn>=1.3
+matplotlib>=3.7
+PyYAML>=6.0
+tqdm>=4.65
+
+# Quantum
+pennylane>=0.36
+pennylane-lightning>=0.36
+
+# Torch (Kaggle has this preinstalled; pin loosely)
+torch>=2.1
+
+# Data
+jetnet>=0.2.4
+h5py>=3.9

@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+.env
+
+# Local agent/editor config
+.claude/
+
+# Large / regenerable data (JetNet download ~250 MB)
+data_cache/
+*.h5
+*.hdf5
+
+# Per-config sweep cache (852 JSON files, regenerable) and temp run logs
+results/cache/
+*.tmp
+*.log
+full_sweep.*
+sweep_resume.*
+
+# Intentionally COMMITTED (portfolio payoff): results/figures/*.png + *.csv,
+# results/results_full.parquet, results/diagnostics_gradvar.parquet
